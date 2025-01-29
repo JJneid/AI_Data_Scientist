@@ -1,0 +1,469 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>AI Agent Chat Interface</title>
+    <style>
+        /* Reset and base styles */
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Oxygen, Ubuntu, Cantarell, sans-serif;
+            margin: 0;
+            padding: 0;
+            display: flex;
+            height: 100vh;
+            background-color: #f5f5f5;
+        }
+
+        /* Layout components */
+        #sidebar {
+            width: 250px;
+            background: #ffffff;
+            padding: 20px;
+            border-right: 1px solid #e0e0e0;
+            display: flex;
+            flex-direction: column;
+            box-shadow: 2px 0 5px rgba(0, 0, 0, 0.1);
+        }
+
+        #main {
+            flex-grow: 1;
+            padding: 20px;
+            display: flex;
+            flex-direction: column;
+            max-width: calc(100% - 600px);
+        }
+
+        #file-viewer {
+            width: 350px;
+            background: #ffffff;
+            padding: 20px;
+            border-left: 1px solid #e0e0e0;
+            box-shadow: -2px 0 5px rgba(0, 0, 0, 0.1);
+            overflow-y: auto;
+        }
+
+        /* Chat area */
+        #chat {
+            flex-grow: 1;
+            overflow-y: auto;
+            border: 1px solid #e0e0e0;
+            border-radius: 8px;
+            padding: 20px;
+            margin-bottom: 20px;
+            background: #ffffff;
+        }
+
+        #input-container {
+            display: flex;
+            gap: 10px;
+            padding: 10px;
+            background: #ffffff;
+            border: 1px solid #e0e0e0;
+            border-radius: 8px;
+        }
+
+        #input {
+            flex-grow: 1;
+            padding: 12px;
+            border: 1px solid #e0e0e0;
+            border-radius: 6px;
+            font-size: 14px;
+            outline: none;
+            transition: border-color 0.2s;
+        }
+
+        #input:focus {
+            border-color: #007bff;
+        }
+
+        /* Messages */
+        .message {
+            margin: 10px 0;
+            padding: 12px;
+            border-radius: 8px;
+            max-width: 80%;
+            word-wrap: break-word;
+        }
+
+        .user-message {
+            background: #007bff;
+            color: white;
+            margin-left: auto;
+        }
+
+        .assistant-message {
+            background: #f0f2f5;
+            color: #1a1a1a;
+            margin-right: auto;
+        }
+
+        /* Buttons */
+        .button {
+            padding: 12px 20px;
+            background: #007bff;
+            color: white;
+            border: none;
+            border-radius: 6px;
+            cursor: pointer;
+            font-size: 14px;
+            font-weight: 500;
+            transition: background-color 0.2s;
+        }
+
+        .button:hover {
+            background: #0056b3;
+        }
+
+        #new-chat {
+            margin-bottom: 20px;
+        }
+
+        /* Lists */
+        #chat-list {
+            list-style: none;
+            padding: 0;
+            margin: 0;
+            overflow-y: auto;
+        }
+
+        .list-item {
+            padding: 10px;
+            margin: 5px 0;
+            background: #ffffff;
+            border: 1px solid #e0e0e0;
+            border-radius: 6px;
+            cursor: pointer;
+            transition: background-color 0.2s;
+        }
+
+        .list-item:hover {
+            background: #f8f9fa;
+        }
+
+        .list-item.active {
+            background: #e3f2fd;
+            border-color: #007bff;
+        }
+
+        /* Section titles */
+        .section-title {
+            font-weight: 600;
+            margin: 15px 0 10px 0;
+            color: #1a1a1a;
+            font-size: 16px;
+        }
+
+        /* Code blocks */
+        pre {
+            background: #f8f9fa;
+            padding: 12px;
+            border-radius: 6px;
+            overflow-x: auto;
+            border: 1px solid #e0e0e0;
+        }
+
+        code {
+            font-family: 'Consolas', 'Monaco', monospace;
+            font-size: 14px;
+        }
+
+        /* Connection status */
+        #connection-status {
+            position: fixed;
+            top: 20px;
+            right: 20px;
+            padding: 8px 16px;
+            border-radius: 20px;
+            font-weight: 500;
+            font-size: 14px;
+            z-index: 1000;
+            transition: all 0.3s ease;
+        }
+
+        .status-connected {
+            background-color: #4caf50;
+            color: white;
+        }
+
+        .status-disconnected {
+            background-color: #f44336;
+            color: white;
+        }
+
+        .status-connecting {
+            background-color: #ff9800;
+            color: white;
+        }
+
+        /* Loading indicator */
+        .loading {
+            display: inline-block;
+            width: 20px;
+            height: 20px;
+            border: 3px solid #f3f3f3;
+            border-radius: 50%;
+            border-top: 3px solid #007bff;
+            animation: spin 1s linear infinite;
+            margin-left: 10px;
+        }
+
+        @keyframes spin {
+            0% { transform: rotate(0deg); }
+            100% { transform: rotate(360deg); }
+        }
+
+        /* Scrollbar styling */
+        ::-webkit-scrollbar {
+            width: 8px;
+            height: 8px;
+        }
+
+        ::-webkit-scrollbar-track {
+            background: #f1f1f1;
+            border-radius: 4px;
+        }
+
+        ::-webkit-scrollbar-thumb {
+            background: #888;
+            border-radius: 4px;
+        }
+
+        ::-webkit-scrollbar-thumb:hover {
+            background: #555;
+        }
+    </style>
+</head>
+<body>
+    <div id="sidebar">
+        <button id="new-chat" class="button">New Chat</button>
+        <div class="section-title">Chat History</div>
+        <ul id="chat-list"></ul>
+    </div>
+
+    <div id="main">
+        <div id="chat"></div>
+        <div id="input-container">
+            <input type="text" id="input" placeholder="Type your message...">
+            <button id="send" class="button">Send</button>
+        </div>
+    </div>
+
+    <div id="file-viewer">
+        <div class="section-title">Generated Files</div>
+        <div id="files-list"></div>
+        <div class="section-title">Available Variables</div>
+        <div id="variables-list"></div>
+    </div>
+
+    <div id="connection-status">Disconnected</div>
+
+    <script>
+        // Global variables
+        let ws = null;
+        let currentChatId = null;
+        let isReconnecting = false;
+        const RECONNECT_DELAY = 3000;
+        const MAX_RECONNECT_ATTEMPTS = 5;
+        let reconnectAttempts = 0;
+        let clientId = generateClientId();
+
+        // DOM Elements
+        const chatDiv = document.getElementById('chat');
+        const input = document.getElementById('input');
+        const sendButton = document.getElementById('send');
+        const newChatButton = document.getElementById('new-chat');
+        const chatList = document.getElementById('chat-list');
+        const filesList = document.getElementById('files-list');
+        const variablesList = document.getElementById('variables-list');
+        const connectionStatus = document.getElementById('connection-status');
+
+        // Helper Functions
+        function generateClientId() {
+            return 'client_' + Math.random().toString(36).substr(2, 9);
+        }
+
+        function updateConnectionStatus(status) {
+            connectionStatus.textContent = status;
+            connectionStatus.className = `status-${status.toLowerCase()}`;
+        }
+
+        function appendMessage(content, isUser = false) {
+            const messageDiv = document.createElement('div');
+            messageDiv.className = `message ${isUser ? 'user-message' : 'assistant-message'}`;
+            messageDiv.textContent = content;
+            chatDiv.appendChild(messageDiv);
+            chatDiv.scrollTop = chatDiv.scrollHeight;
+        }
+
+        function updateFilesList(files) {
+            filesList.innerHTML = files.map(file => `
+                <div class="list-item file-item">
+                    ${file}
+                </div>
+            `).join('');
+        }
+
+        function updateVariablesList(variables) {
+            variablesList.innerHTML = variables.map(variable => `
+                <div class="list-item variable-item">
+                    ${variable}
+                </div>
+            `).join('');
+        }
+
+        // WebSocket Functions
+        function initializeWebSocket() {
+            if (ws && ws.readyState === WebSocket.OPEN) {
+                console.log('WebSocket already connected');
+                return;
+            }
+
+            updateConnectionStatus('Connecting');
+            
+            const port = window.location.port || '8000';
+            const host = window.location.hostname || '127.0.0.1';
+            const wsUrl = `ws://${host}:${port}/ws/${clientId}`;
+            
+            ws = new WebSocket(wsUrl);
+            
+            ws.onopen = () => {
+                console.log('WebSocket connected successfully');
+                updateConnectionStatus('Connected');
+                reconnectAttempts = 0;
+                isReconnecting = false;
+            };
+
+            ws.onclose = (event) => {
+                console.log('WebSocket closed:', event.code);
+                updateConnectionStatus('Disconnected');
+                
+                if (!isReconnecting && reconnectAttempts < MAX_RECONNECT_ATTEMPTS) {
+                    isReconnecting = true;
+                    reconnectAttempts++;
+                    console.log(`Attempting to reconnect... (${reconnectAttempts}/${MAX_RECONNECT_ATTEMPTS})`);
+                    setTimeout(initializeWebSocket, RECONNECT_DELAY);
+                }
+            };
+
+            ws.onerror = (error) => {
+                console.error('WebSocket error:', error);
+                updateConnectionStatus('Error');
+            };
+
+            ws.onmessage = handleWebSocketMessage;
+        }
+
+        function handleWebSocketMessage(event) {
+            try {
+                const message = JSON.parse(event.data);
+                console.log('Received message:', message);
+                
+                switch (message.type) {
+                    case 'connection_status':
+                        if (message.status === 'connected') {
+                            console.log('Connection confirmed by server');
+                            newChat();
+                        }
+                        break;
+                        
+                    case 'new_chat':
+                        currentChatId = message.chat_id;
+                        chatDiv.innerHTML = '';
+                        break;
+                        
+                    case 'message':
+                        appendMessage(message.content, false);
+                        sendButton.disabled = false;
+                        input.disabled = false;
+                        break;
+                        
+                    case 'error':
+                        console.error('Server error:', message.error);
+                        appendMessage(`Error: ${message.error}`, false);
+                        break;
+                        
+                    case 'files':
+                        updateFilesList(message.files);
+                        break;
+                        
+                    case 'variables':
+                        updateVariablesList(message.variables);
+                        break;
+                }
+            } catch (error) {
+                console.error('Error processing message:', error);
+            }
+        }
+
+        function sendMessage(content) {
+            if (!ws || ws.readyState !== WebSocket.OPEN) {
+                console.error('WebSocket is not connected');
+                return false;
+            }
+            
+            try {
+                ws.send(JSON.stringify({
+                    type: 'message',
+                    content: content,
+                    chat_id: currentChatId
+                }));
+                return true;
+            } catch (error) {
+                console.error('Error sending message:', error);
+                return false;
+            }
+        }
+
+        function newChat() {
+            if (ws && ws.readyState === WebSocket.OPEN) {
+                ws.send(JSON.stringify({type: 'new_chat'}));
+            }
+        }
+
+        // Event Listeners
+        input.addEventListener('keypress', (e) => {
+            if (e.key === 'Enter' && !e.shiftKey) {
+                e.preventDefault();
+                const content = input.value.trim();
+                if (content) {
+                    appendMessage(content, true);
+                    sendMessage(content);
+                    input.value = '';
+                    sendButton.disabled = true;
+                    input.disabled = true;
+                }
+            }
+        });
+
+        sendButton.addEventListener('click', () => {
+            const content = input.value.trim();
+            if (content) {
+                appendMessage(content, true);
+                sendMessage(content);
+                input.value = '';
+                sendButton.disabled = true;
+                input.disabled = true;
+            }
+        });
+
+        newChatButton.addEventListener('click', newChat);
+
+        // Initialize on page load
+        document.addEventListener('DOMContentLoaded', initializeWebSocket);
+
+        // Reconnect on visibility change
+        document.addEventListener('visibilitychange', () => {
+            if (document.visibilityState === 'visible' && (!ws || ws.readyState !== WebSocket.OPEN)) {
+                initializeWebSocket();
+            }
+        });
+    </script>
+</body>
+</html>

@@ -75,10 +75,10 @@ app = FastAPI(lifespan=lifespan)
 app.add_middleware(
     CORSMiddleware,
     allow_origins=[
-        "http://localhost:8006",
-        "http://127.0.0.1:8006",
-        "http://[::1]:8006",  # IPv6 localhost
-        "http://0.0.0.0:8006",
+        "http://localhost:8007",
+        "http://127.0.0.1:8007",
+        "http://[::1]:8007",  # IPv6 localhost
+        "http://0.0.0.0:8007",
     ],
     allow_credentials=True,
     allow_methods=["*"],
@@ -107,7 +107,7 @@ async def query_agent(request: QueryRequest):
         return JSONResponse(
             content={"response": response_content},
             headers={
-                "Access-Control-Allow-Origin": "http://localhost:8006",
+                "Access-Control-Allow-Origin": "http://localhost:8007",
                 "Access-Control-Allow-Credentials": "true",
             }
         )
@@ -117,7 +117,7 @@ async def query_agent(request: QueryRequest):
             status_code=500,
             content={"error": str(e)},
             headers={
-                "Access-Control-Allow-Origin": "http://localhost:8006",
+                "Access-Control-Allow-Origin": "http://localhost:8007",
                 "Access-Control-Allow-Credentials": "true",
             }
         )
@@ -125,17 +125,31 @@ async def query_agent(request: QueryRequest):
 async def get_variables():
     """Get list of available variables in the kernel"""
     if not state.executor:
-        raise HTTPException(status_code=500, detail="Executor not initialized")
+        return {"variables": []}
     
     try:
         cancellation_token = CancellationToken()
         result = await state.executor.execute_code_blocks(
-            [CodeBlock(code="list(locals().keys())", language="python")],
+            [CodeBlock(
+                code="print([var for var in locals().keys() if not var.startswith('_')])", 
+                language="python"
+            )],
             cancellation_token
         )
-        return {"variables": result.output if result.output else []}
+        
+        # Clean up the output and convert to list
+        variables = result.output
+        if isinstance(variables, str):
+            # Remove any leading/trailing brackets and split
+            variables = variables.strip('[]').replace("'", "").split(', ')
+            variables = [v.strip() for v in variables if v.strip()]
+        
+        return {"variables": variables}
     except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
+        return JSONResponse(
+            status_code=500,
+            content={"error": str(e)}
+        )
 
 @app.get("/variable/{var_name}")
 async def get_variable_value(var_name: str):

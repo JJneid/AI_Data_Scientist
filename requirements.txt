@@ -1,0 +1,8 @@
+autogen_agentchat
+autogen_core
+autogen_ext
+fastapi
+tiktoken
+openai
+nbclient
+ipykernel

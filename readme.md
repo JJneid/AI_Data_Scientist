@@ -17,12 +17,16 @@ files
 # Front end
 
 it has basic components
+
 chat
+
 show variables
+
 show files
 
 
 # Issues
 
 dependnecies within the jupyter server
+
 jupyter server running locally

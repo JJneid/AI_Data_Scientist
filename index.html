@@ -1,0 +1,348 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>AutoGen Chat</title>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+
+        body {
+            font-family: Arial, sans-serif;
+            height: 100vh;
+        }
+
+        .container {
+            display: flex;
+            height: 100%;
+        }
+
+        .chat-section {
+            flex: 1;
+            display: flex;
+            flex-direction: column;
+            background-color: #f5f5f5;
+        }
+
+        .chat-messages {
+            flex: 1;
+            overflow-y: auto;
+            padding: 20px;
+        }
+
+        .message {
+            margin-bottom: 20px;
+            max-width: 80%;
+        }
+
+        .user-message {
+            margin-left: auto;
+            background-color: #007bff;
+            color: white;
+            padding: 10px 15px;
+            border-radius: 15px;
+            text-align: right;
+        }
+
+        .assistant-message {
+            background-color: white;
+            padding: 10px 15px;
+            border-radius: 15px;
+            box-shadow: 0 2px 5px rgba(0,0,0,0.1);
+        }
+
+        .error-message {
+            background-color: #ff4444;
+            color: white;
+            padding: 10px 15px;
+            border-radius: 15px;
+            margin-bottom: 20px;
+        }
+
+        .input-section {
+            padding: 20px;
+            background-color: white;
+            border-top: 1px solid #ddd;
+        }
+
+        .input-form {
+            display: flex;
+            gap: 10px;
+        }
+
+        input[type="text"] {
+            flex: 1;
+            padding: 10px;
+            border: 1px solid #ddd;
+            border-radius: 5px;
+            font-size: 16px;
+        }
+
+        button {
+            padding: 10px 20px;
+            background-color: #007bff;
+            color: white;
+            border: none;
+            border-radius: 5px;
+            cursor: pointer;
+        }
+
+        button:hover {
+            background-color: #0056b3;
+        }
+
+        button:disabled {
+            background-color: #cccccc;
+            cursor: not-allowed;
+        }
+
+        .sidebar {
+            width: 300px;
+            background-color: white;
+            border-left: 1px solid #ddd;
+            padding: 20px;
+            overflow-y: auto;
+        }
+
+        .sidebar h2 {
+            margin-bottom: 15px;
+            color: #333;
+        }
+
+        .variables-section, .files-section {
+            margin-bottom: 30px;
+        }
+
+        .variable-item, .file-item {
+            padding: 8px;
+            margin-bottom: 5px;
+            background-color: #f8f9fa;
+            border-radius: 4px;
+            cursor: pointer;
+            word-break: break-all;
+        }
+
+        .variable-item:hover, .file-item:hover {
+            background-color: #e9ecef;
+        }
+
+        pre {
+            white-space: pre-wrap;
+            word-wrap: break-word;
+            font-family: inherit;
+        }
+
+        .loading {
+            display: inline-block;
+            width: 20px;
+            height: 20px;
+            border: 3px solid #f3f3f3;
+            border-top: 3px solid #3498db;
+            border-radius: 50%;
+            animation: spin 1s linear infinite;
+            margin-right: 10px;
+        }
+
+        @keyframes spin {
+            0% { transform: rotate(0deg); }
+            100% { transform: rotate(360deg); }
+        }
+    </style>
+</head>
+<body>
+    <div id="connection-status" style="padding: 10px; text-align: center;">
+        Checking API connection...
+    </div>
+    <div class="container">
+        <div class="chat-section">
+            <div class="chat-messages" id="chat-messages">
+                <!-- Messages will be added here -->
+            </div>
+            <div class="input-section">
+                <form class="input-form" id="chat-form">
+                    <input type="text" id="user-input" placeholder="Type your message...">
+                    <button type="submit" id="submit-button">Send</button>
+                </form>
+            </div>
+        </div>
+        <div class="sidebar">
+            <div class="variables-section">
+                <h2>Variables</h2>
+                <div id="variables-list">
+                    <!-- Variables will be listed here -->
+                </div>
+            </div>
+            <div class="files-section">
+                <h2>Files</h2>
+                <div id="files-list">
+                    <!-- Files will be listed here -->
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        const API_BASE_URL = 'http://localhost:8013';
+        let isProcessing = false;
+
+        function setLoading(loading) {
+            const button = document.getElementById('submit-button');
+            const input = document.getElementById('user-input');
+            isProcessing = loading;
+            button.disabled = loading;
+            input.disabled = loading;
+            button.innerHTML = loading ? '<div class="loading"></div>Send' : 'Send';
+        }
+
+        function addMessage(content, type = 'assistant') {
+            const messagesDiv = document.getElementById('chat-messages');
+            const messageDiv = document.createElement('div');
+            const className = type === 'user' ? 'user-message' : 
+                            type === 'error' ? 'error-message' : 
+                            'assistant-message';
+            messageDiv.className = `message ${className}`;
+            messageDiv.innerHTML = `<pre>${content}</pre>`;
+            messagesDiv.appendChild(messageDiv);
+            messagesDiv.scrollTop = messagesDiv.scrollHeight;
+        }
+
+        async function fetchVariablesAndFiles() {
+            try {
+                const [variablesRes, filesRes] = await Promise.all([
+                    fetch(`${API_BASE_URL}/variables`),
+                    fetch(`${API_BASE_URL}/files`)
+                ]);
+                
+                if (!variablesRes.ok || !filesRes.ok) {
+                    throw new Error('Failed to fetch variables or files');
+                }
+
+                const variablesData = await variablesRes.json();
+                const filesData = await filesRes.json();
+
+                // Update variables list
+                const variablesList = document.getElementById('variables-list');
+                variablesList.innerHTML = (variablesData.variables || [])
+                    .map(variable => `
+                        <div class="variable-item" onclick="showVariable('${variable}')">
+                            ${variable}
+                        </div>
+                    `).join('');
+
+                // Update files list
+                const filesList = document.getElementById('files-list');
+                filesList.innerHTML = (filesData.files || [])
+                    .map(file => `
+                        <div class="file-item" onclick="showFile('${file}')">
+                            ${file}
+                        </div>
+                    `).join('');
+            } catch (error) {
+                console.error('Error fetching variables or files:', error);
+            }
+        }
+
+        async function showVariable(variableName) {
+            try {
+                const response = await fetch(`${API_BASE_URL}/variable/${variableName}`);
+                if (!response.ok) {
+                    throw new Error(`HTTP error! status: ${response.status}`);
+                }
+                const data = await response.json();
+                addMessage(`Variable ${variableName}:\n${data.value}`);
+            } catch (error) {
+                console.error('Error fetching variable:', error);
+                addMessage(`Error fetching variable: ${error.message}`, 'error');
+            }
+        }
+
+        async function showFile(filePath) {
+            try {
+                const response = await fetch(`${API_BASE_URL}/file/${filePath}`);
+                if (!response.ok) {
+                    throw new Error(`HTTP error! status: ${response.status}`);
+                }
+                const data = await response.json();
+                addMessage(`File ${filePath}:\n${data.content}`);
+            } catch (error) {
+                console.error('Error fetching file:', error);
+                addMessage(`Error fetching file: ${error.message}`, 'error');
+            }
+        }
+
+        document.getElementById('chat-form').addEventListener('submit', async (e) => {
+            e.preventDefault();
+            if (isProcessing) return;
+
+            const input = document.getElementById('user-input');
+            const message = input.value.trim();
+            if (!message) return;
+
+            // Add user message
+            addMessage(message, 'user');
+            input.value = '';
+            setLoading(true);
+
+            try {
+                const response = await fetch(`${API_BASE_URL}/query`, {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json',
+                        'Accept': 'application/json'
+                    },
+                    body: JSON.stringify({ query: message }),
+                });
+
+                if (!response.ok) {
+                    throw new Error(`HTTP error! status: ${response.status}`);
+                }
+
+                const data = await response.json();
+                
+                // Add assistant response
+                addMessage(data.response);
+
+                // Update variables and files lists
+                await fetchVariablesAndFiles();
+            } catch (error) {
+                console.error('Error:', error);
+                addMessage(`Error: ${error.message}`, 'error');
+            } finally {
+                setLoading(false);
+            }
+        });
+
+        async function testConnection() {
+            const statusDiv = document.getElementById('connection-status');
+            try {
+                const response = await fetch(`${API_BASE_URL}/variables`);
+                if (response.ok) {
+                    statusDiv.innerHTML = '✅ Connected to API';
+                    statusDiv.style.backgroundColor = '#4CAF50';
+                    statusDiv.style.color = 'white';
+                    return true;
+                } else {
+                    throw new Error(`HTTP error! status: ${response.status}`);
+                }
+            } catch (error) {
+                console.error('API Connection Error:', error);
+                statusDiv.innerHTML = `❌ API Connection Failed: ${error.message}`;
+                statusDiv.style.backgroundColor = '#f44336';
+                statusDiv.style.color = 'white';
+                return false;
+            }
+        }
+
+        // Test connection first, then fetch variables and files if connected
+        testConnection().then(connected => {
+            if (connected) {
+                fetchVariablesAndFiles();
+            }
+        });
+    </script>
+</body>
+</html>

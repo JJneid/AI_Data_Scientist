@@ -31,6 +31,10 @@ state = GlobalState()
 class QueryRequest(BaseModel):
     query: str
 
+from fastapi.middleware.cors import CORSMiddleware
+
+
+
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     # Startup
@@ -70,23 +74,29 @@ app = FastAPI(lifespan=lifespan)
 
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],
+    allow_origins=[
+        "http://localhost:8006",
+        "http://127.0.0.1:8006",
+        "http://[::1]:8006",  # IPv6 localhost
+        "http://0.0.0.0:8006",
+    ],
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
 )
 
+
 @app.post("/query")
 async def query_agent(request: QueryRequest):
     """Process a query and return the final response"""
     if not state.agent or not state.executor:
-        raise HTTPException(
+        return JSONResponse(
             status_code=500,
-            detail="Agent or executor not initialized"
+            content={"error": "Agent or executor not initialized"}
         )
     
     try:
-        # Process the query using Console and run_stream, exactly as in original code
+        # Process the query using Console and run_stream
         result = await Console(
             state.agent.run_stream(task=request.query)
         )
@@ -94,21 +104,23 @@ async def query_agent(request: QueryRequest):
         # Get the final response content
         response_content = result.messages[-1].content if result.messages else ""
         
-        # Get available variables
-        cancellation_token = CancellationToken()
-        variables_result = await state.executor.execute_code_blocks(
-            [CodeBlock(code="list(locals().keys())", language="python")],
-            cancellation_token
+        return JSONResponse(
+            content={"response": response_content},
+            headers={
+                "Access-Control-Allow-Origin": "http://localhost:8006",
+                "Access-Control-Allow-Credentials": "true",
+            }
         )
         
-        return {
-            "response": response_content,
-            "variables": variables_result.output if variables_result.output else []
-        }
-        
     except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
-
+        return JSONResponse(
+            status_code=500,
+            content={"error": str(e)},
+            headers={
+                "Access-Control-Allow-Origin": "http://localhost:8006",
+                "Access-Control-Allow-Credentials": "true",
+            }
+        )
 @app.get("/variables")
 async def get_variables():
     """Get list of available variables in the kernel"""
@@ -165,4 +177,4 @@ async def get_file_content(file_path: str):
 
 if __name__ == "__main__":
     import uvicorn
-    uvicorn.run(app, host="0.0.0.0", port=8006)
+    uvicorn.run(app, host="0.0.0.0", port=8013)

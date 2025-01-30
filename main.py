@@ -24,7 +24,7 @@ class GlobalState:
     def __init__(self):
         self.executor = None
         self.agent = None
-        self.output_dir = Path("coding")
+        self.output_dir = Path("/Users/JJneid/Desktop/SlashMl/AI_Data_Scientist/ui/coding")
 
 state = GlobalState()
 
@@ -42,7 +42,7 @@ async def lifespan(app: FastAPI):
         state.executor = JupyterCodeExecutor(
             kernel_name="python3",
             timeout=120,
-            output_dir=state.output_dir
+            output_dir=Path("/Users/JJneid/Desktop/SlashMl/AI_Data_Scientist/ui/coding")
         )
         await state.executor.__aenter__()
         
@@ -62,6 +62,7 @@ async def lifespan(app: FastAPI):
             Before every import, include code to install dependency use the following format:
             import subprocess
             subprocess.check_call(['pip', 'install', 'package_name'])
+            rename fiels with appropriate name based on variables before saving them
             """
         )
         yield
@@ -176,6 +177,9 @@ async def get_files():
     files = [str(f.relative_to(state.output_dir)) for f in state.output_dir.rglob("*") if f.is_file()]
     return {"files": files}
 
+from fastapi.responses import FileResponse
+from fastapi import HTTPException
+
 @app.get("/file/{file_path:path}")
 async def get_file_content(file_path: str):
     """Get content of a specific file"""
@@ -184,11 +188,19 @@ async def get_file_content(file_path: str):
         raise HTTPException(status_code=404, detail="File not found")
     
     try:
+        # If it's an image file, return it directly
+        if file_path.lower().endswith(('.png', '.jpg', '.jpeg')):
+            return FileResponse(full_path)
+        
+        # For other files, return the content as before
         content = full_path.read_text()
         return {"content": content}
     except Exception as e:
-        raise HTTPException(status_code=500, detail=f"Error reading file: {str(e)}")
+        raise HTTPException(
+            status_code=500,
+            detail=f"Error reading file: {str(e)}"
+        )
 
 if __name__ == "__main__":
     import uvicorn
-    uvicorn.run(app, host="0.0.0.0", port=8013)
+    uvicorn.run(app, host="0.0.0.0", port=8017)

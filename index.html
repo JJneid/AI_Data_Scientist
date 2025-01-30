@@ -186,7 +186,7 @@
     </div>
 
     <script>
-        const API_BASE_URL = 'http://localhost:8014';
+        const API_BASE_URL = 'http://localhost:8017';
         let isProcessing = false;
 
         function setLoading(loading) {
@@ -261,18 +261,36 @@
         }
 
         async function showFile(filePath) {
-            try {
-                const response = await fetch(`${API_BASE_URL}/file/${filePath}`);
-                if (!response.ok) {
-                    throw new Error(`HTTP error! status: ${response.status}`);
-                }
-                const data = await response.json();
-                addMessage(`File ${filePath}:\n${data.content}`);
-            } catch (error) {
-                console.error('Error fetching file:', error);
-                addMessage(`Error fetching file: ${error.message}`, 'error');
+    try {
+        // Check if it's an image file
+        if (filePath.toLowerCase().endsWith('.png') || 
+            filePath.toLowerCase().endsWith('.jpg') || 
+            filePath.toLowerCase().endsWith('.jpeg')) {
+            
+            // For images, create an image element in the chat
+            const messageDiv = document.createElement('div');
+            messageDiv.className = 'message assistant-message';
+            messageDiv.innerHTML = `
+                <div>File: ${filePath}</div>
+                <img src="${API_BASE_URL}/file/${filePath}" alt="${filePath}" 
+                     style="max-width: 100%; margin-top: 10px;">
+            `;
+            document.getElementById('chat-messages').appendChild(messageDiv);
+            
+        } else {
+            // For other files, show content as text
+            const response = await fetch(`${API_BASE_URL}/file/${filePath}`);
+            if (!response.ok) {
+                throw new Error(`HTTP error! status: ${response.status}`);
             }
+            const data = await response.json();
+            addMessage(`File ${filePath}:\n${data.content}`);
         }
+    } catch (error) {
+        console.error('Error fetching file:', error);
+        addMessage(`Error fetching file: ${error.message}`, 'error');
+    }
+}
 
         document.getElementById('chat-form').addEventListener('submit', async (e) => {
             e.preventDefault();

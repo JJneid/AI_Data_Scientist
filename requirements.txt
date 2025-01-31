@@ -6,3 +6,4 @@ tiktoken
 openai
 nbclient
 ipykernel
+langchain_experimental

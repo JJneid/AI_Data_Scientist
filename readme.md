@@ -36,6 +36,14 @@ curl http://localhost:8012/files
 curl -O http://localhost:8012/file/plot.png
 ```
 
+```
+restart
+```
+
+```
+upload csv
+```
+
 
 main is a backend session, i still need to design and implement the concept of sessions to create new chats and new directory for each chat, this is tricky because i need a new set of endpoints on a different URL based on the current design i did
 
@@ -62,3 +70,14 @@ dependnecies within the jupyter server
 >>> currently patched, can be handled better
 
 jupyter server running locally
+
+# next
+
+Add a cleanup restart endpoint
+
+introduce the concept of session
+
+
+add a session token and validate with a database oyu create to keep track
+
+

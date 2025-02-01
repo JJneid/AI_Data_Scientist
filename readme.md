@@ -37,11 +37,17 @@ curl -O http://localhost:8012/file/plot.png
 ```
 
 ```
-restart
+restart, restas the session and delete all files generated in the direcotry
+
+curl -X POST http://localhost:8017/restart
 ```
 
 ```
-upload csv
+upload csv file and load it i mmemory
+
+curl -X POST http://localhost:8012/upload_csv \
+-H "Content-Type: application/json" \
+-d '{"file_path": "/Users/JJneid/Desktop/TD project/tdi_rentals_dataset.csv"}'
 ```
 
 
@@ -80,4 +86,8 @@ introduce the concept of session
 
 add a session token and validate with a database oyu create to keep track
 
+
+uvicorn main:app --reload --port 8012 --host 127.0.0.1
+
+frontend 
 

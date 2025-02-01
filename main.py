@@ -108,17 +108,14 @@ save_tool = FunctionTool(
     name="save_tool"  # Explicitly set the name
 )
 
-df = pd.read_csv("/Users/JJneid/Desktop/TD project/tdi_rentals_dataset.csv")
-tool_csv = LangChainToolAdapter(PythonAstREPLTool(locals={"df": df}))
-# df=pd.DataFrame()
-# tool_csv = LangChainToolAdapter(PythonAstREPLTool(locals={"df": df}))
+
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     # Startup
     try:
         state.executor = JupyterCodeExecutor(
-            kernel_name="python3",
+
             timeout=120,
             output_dir=Path(path)
         )
@@ -128,7 +125,7 @@ async def lifespan(app: FastAPI):
         state.agent = AssistantAgent(
             "assistant",
             OpenAIChatCompletionClient(model="gpt-4o-mini"),
-            tools=[tool,save_tool,tool_csv],
+            tools=[tool,save_tool],
             reflect_on_tool_use=True,
             system_message="""
             You are a data analysis assistant. Maintain state between queries by:
@@ -145,7 +142,6 @@ async def lifespan(app: FastAPI):
             IMportant:
             When asked to save and download files, use the tool `save_tool`
 
-            When I upload a csv file, Use `tool_csv` and the `df` variable to access the dataset, if any.
 
             """
         )
@@ -334,31 +330,50 @@ async def restart_kernel():
         )
 
 
-class CSVPathRequest(BaseModel):
-    csv_path: str
+class CSVUploadRequest(BaseModel):
+    file_path: str
 
-@app.post("/set_csv")
-async def set_csv_path(request: CSVPathRequest):
-    """Set a new CSV file path and update the tool"""
+@app.post("/upload_csv")
+async def upload_csv(request: CSVUploadRequest):
+    """
+    Upload CSV file and have the agent load it into memory
+    """
     try:
-        # Create new DataFrame from path
-        df = pd.read_csv(request.csv_path)
+        # Copy file to working directory
+        file_name = Path(request.file_path).name
+        destination = state.output_dir / file_name
+        shutil.copy2(request.file_path, destination)
         
-        # Create new tool with updated DataFrame
-        global tool_csv  # Access the global tool_csv variable
-        tool_csv = LangChainToolAdapter(PythonAstREPLTool(locals={"df": df}))
+        # Create query for agent to load the file
+        load_query = f"read the CSV file named '{destination}' and load it into a DataFrame named 'df'"
         
-        return {
-            "message": "CSV path set successfully",
-            "path": request.csv_path,
-            "shape": df.shape,
-            "columns": list(df.columns)
-        }
+        # Process query using agent
+        result = await Console(
+            state.agent.run_stream(task=load_query)
+        )
+        
+        return JSONResponse(
+            content={
+                "message": "CSV file uploaded and loaded",
+                "file_name": file_name,
+                "agent_response": result.messages[-1].content if result.messages else "",
+            },
+            headers={
+                "Access-Control-Allow-Origin": "http://localhost:8010",
+                "Access-Control-Allow-Credentials": "true",
+            }
+        )
+        
     except Exception as e:
         return JSONResponse(
             status_code=500,
-            content={"error": f"Error loading CSV: {str(e)}"}
-        ) 
+            content={"error": f"Failed to process CSV file: {str(e)}"},
+            headers={
+                "Access-Control-Allow-Origin": "http://localhost:8010",
+                "Access-Control-Allow-Credentials": "true",
+            }
+        )
+    
 
 if __name__ == "__main__":
     import uvicorn

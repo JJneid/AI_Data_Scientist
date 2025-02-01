@@ -7,3 +7,6 @@ openai
 nbclient
 ipykernel
 langchain_experimental
+authlib 
+httpx 
+itsdangerous

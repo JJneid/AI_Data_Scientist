@@ -39,7 +39,7 @@ class QueryRequest(BaseModel):
 
 from fastapi.middleware.cors import CORSMiddleware
 
-async def save_files(file_name: str, content: str, file_type: str = 'txt') -> str:
+async def save_files(file_name: str, content: str, file_type: str = 'txt', chat_id: str = None) -> str:
     """
     Save content to a file with proper formatting and naming convention.
     
@@ -47,19 +47,21 @@ async def save_files(file_name: str, content: str, file_type: str = 'txt') -> st
         file_name (str): Base name for the file (will be cleaned and formatted)
         content (str): Content to save
         file_type (str): File extension (default: 'txt')
-        directory (Path): Directory to save file (default: None, uses state.output_dir)
+        chat_id (str): Chat ID to determine save directory
     
     Returns:
         str: Path to saved file
     """
     try:
-        # Use state output directory if none provided
-        save_dir = Path(path)
+        # Determine save directory based on chat_id
+        if chat_id:
+            save_dir = state.output_dir  # Uses the current chat directory from state
+        else:
+            save_dir = Path(path)  # Fallback to base path
         
         # Clean the file name: remove spaces and special characters
         clean_name = "".join(c for c in file_name if c.isalnum() or c in ['_', '-'])
         clean_name = clean_name.lower()
-        
         
         # Construct full file name
         full_name = f"{clean_name}.{file_type}"
@@ -71,26 +73,21 @@ async def save_files(file_name: str, content: str, file_type: str = 'txt') -> st
         # Handle different file types
         if file_type == 'csv':
             if isinstance(content, pd.DataFrame):
-                # If content is already a DataFrame
                 content.to_csv(file_path, index=False)
             elif isinstance(content, str):
-                # If content is a CSV string
                 with open(file_path, 'w') as f:
                     f.write(content)
             elif isinstance(content, (list, dict)):
-                # If content is a list or dict, convert to DataFrame
                 df = pd.DataFrame(content)
                 df.to_csv(file_path, index=False)
             else:
                 raise ValueError(f"Unsupported CSV content type: {type(content)}")
                 
         elif file_type in ['png', 'jpg', 'jpeg']:
-            # For binary files like images
             with open(file_path, 'wb') as f:
                 f.write(content if isinstance(content, bytes) else content.encode())
         
         else:
-            # For text files
             with open(file_path, 'w') as f:
                 f.write(str(content))
         
@@ -101,10 +98,10 @@ async def save_files(file_name: str, content: str, file_type: str = 'txt') -> st
         print(f"Error saving file: {str(e)}")
         raise
 
-
+# Update the tool with new parameter
 save_tool = FunctionTool(
     save_files, 
-    description="save to a file",
+    description="save to a file in the current chat directory or base directory if no chat specified",
     name="save_tool"  # Explicitly set the name
 )
 
@@ -140,7 +137,9 @@ async def lifespan(app: FastAPI):
 
 
             IMportant:
-            When asked to save and download files, use the tool `save_tool`
+            When asked to save and or download files:
+            1- save the files as variables in the environemnt
+            2- use the tool `save_tool`, directories to save files must be absolutely respected
 
 
             """
@@ -166,10 +165,180 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
+from fastapi import FastAPI, Request
+from authlib.integrations.starlette_client import OAuth
+from starlette.middleware.sessions import SessionMiddleware
+from starlette.responses import RedirectResponse
 
-@app.post("/query")
-async def query_agent(request: QueryRequest):
-    """Process a query and return the final response"""
+# Add these to your FastAPI app setup
+app.add_middleware(SessionMiddleware, secret_key="your-secret-key")
+
+oauth = OAuth()
+oauth.register(
+    name='github',
+    client_id='Ov23liezkCibS7CDLeCR',
+    client_secret='944b3dc9dd8e6b817ae0cbb7a031f8c56d9d6d5b',
+    access_token_url='https://github.com/login/oauth/access_token',
+    access_token_params=None,
+    authorize_url='https://github.com/login/oauth/authorize',
+    authorize_params=None,
+    api_base_url='https://api.github.com/',
+    client_kwargs={'scope': 'user:email'},
+)
+
+def get_user_path(username: str) -> Path:
+    """
+    Creates and returns a user-specific directory path
+    
+    Args:
+        username: The username (from GitHub in this case)
+    
+    Returns:
+        Path: Path object pointing to user's directory
+    """
+    # Base path is your main directory (the one you defined as 'path')
+    user_path = Path(path) / username
+    
+    # Create the directory if it doesn't exist
+    user_path.mkdir(parents=True, exist_ok=True)
+    
+    return user_path
+
+def get_current_user(request: Request):
+    user = request.session.get('user')
+    if not user:
+        raise HTTPException(status_code=401, detail="Not authenticated")
+    return user
+
+
+@app.get('/login/github')
+async def github_login(request: Request):
+    redirect_uri = request.url_for('auth_github')
+    return await oauth.github.authorize_redirect(request, redirect_uri)
+
+@app.get('/auth/github/callback')
+async def auth_github(request: Request):
+    token = await oauth.github.authorize_access_token(request)
+    resp = await oauth.github.get('user', token=token)
+    user = resp.json()
+    
+    # Create user directory
+    user_path = get_user_path(user['login'])
+    
+    # Store user info in session
+    request.session['user'] = user['login']
+    
+    return RedirectResponse(url='/dashboard')
+
+
+class ChatSession(BaseModel):
+    chat_id: str
+    directory: str
+
+@app.post("/create_chat")
+async def create_chat(request: Request):
+    """Create a new chat session with its own directory"""
+    try:
+        # Get user from session
+        user = get_current_user(request)
+        
+        # Generate unique chat ID with timestamp
+        chat_id = f"chat_{datetime.datetime.now().strftime('%Y%m%d_%H%M%S')}"
+        
+        # Create user and chat specific directory
+        user_path = get_user_path(user)
+        chat_dir = user_path / chat_id
+        chat_dir.mkdir(parents=True, exist_ok=True)
+        
+        # Update state output directory
+        state.output_dir = chat_dir
+        
+        return JSONResponse(
+            content={
+                "message": "Chat created successfully",
+                "chat_id": chat_id,
+                "directory": str(chat_dir),
+                "user": user
+            },
+            headers={
+                "Access-Control-Allow-Origin": "http://localhost:8010",
+                "Access-Control-Allow-Credentials": "true",
+            }
+        )
+    except Exception as e:
+        return JSONResponse(
+            status_code=500,
+            content={
+                "error": f"Failed to create chat: {str(e)}"
+            },
+            headers={
+                "Access-Control-Allow-Origin": "http://localhost:8010",
+                "Access-Control-Allow-Credentials": "true",
+            }
+        )
+
+
+@app.get("/chats")
+async def list_chats(request: Request):
+    """List all chat sessions for the current user"""
+    try:
+        # Get user from session
+        user = get_current_user(request)
+        
+        # Get user's directory
+        user_path = get_user_path(user)
+        
+        # Get all chat directories
+        chats = []
+        if user_path.exists():
+            for chat_dir in user_path.iterdir():
+                if chat_dir.is_dir() and chat_dir.name.startswith('chat_'):
+                    # Get creation time from the directory
+                    creation_time = datetime.datetime.fromtimestamp(chat_dir.stat().st_ctime)
+                    
+                    # Get last modified time
+                    modified_time = datetime.datetime.fromtimestamp(chat_dir.stat().st_mtime)
+                    
+                    # Get number of files in chat
+                    files_count = len(list(chat_dir.glob('*')))
+                    
+                    chats.append({
+                        "chat_id": chat_dir.name,
+                        "created_at": creation_time.isoformat(),
+                        "last_modified": modified_time.isoformat(),
+                        "files_count": files_count,
+                        "path": str(chat_dir)
+                    })
+                    
+        # Sort chats by creation time, newest first
+        chats.sort(key=lambda x: x["created_at"], reverse=True)
+        
+        return JSONResponse(
+            content={
+                "chats": chats,
+                "user": user,
+                "total_chats": len(chats)
+            },
+            headers={
+                "Access-Control-Allow-Origin": "http://localhost:8010",
+                "Access-Control-Allow-Credentials": "true",
+            }
+        )
+        
+    except Exception as e:
+        return JSONResponse(
+            status_code=500,
+            content={"error": f"Failed to list chats: {str(e)}"},
+            headers={
+                "Access-Control-Allow-Origin": "http://localhost:8010",
+                "Access-Control-Allow-Credentials": "true",
+            }
+        )
+    
+
+@app.post("/query/{chat_id}")
+async def query_agent_with_chat(chat_id: str, request: QueryRequest, request_obj: Request):
+    """Process a query for a specific chat session"""
     if not state.agent or not state.executor:
         return JSONResponse(
             status_code=500,
@@ -177,6 +346,23 @@ async def query_agent(request: QueryRequest):
         )
     
     try:
+        # Get user from session
+        user = get_current_user(request_obj)
+        
+        # Get user and chat specific directory
+        user_path = get_user_path(user)
+        chat_dir = user_path / chat_id
+        
+        # Verify chat exists and belongs to user
+        if not chat_dir.exists():
+            return JSONResponse(
+                status_code=404,
+                content={"error": f"Chat {chat_id} not found for user {user}"}
+            )
+        
+        # Update state output directory to this chat
+        state.output_dir = chat_dir
+        
         # Process the query using Console and run_stream
         result = await Console(
             state.agent.run_stream(task=request.query)
@@ -186,7 +372,12 @@ async def query_agent(request: QueryRequest):
         response_content = result.messages[-1].content if result.messages else ""
         
         return JSONResponse(
-            content={"response": response_content},
+            content={
+                "response": response_content,
+                "chat_id": chat_id,
+                "user": user,
+                "chat_dir": str(chat_dir)
+            },
             headers={
                 "Access-Control-Allow-Origin": "http://localhost:8010",
                 "Access-Control-Allow-Credentials": "true",
@@ -196,23 +387,139 @@ async def query_agent(request: QueryRequest):
     except Exception as e:
         return JSONResponse(
             status_code=500,
-            content={"error": str(e)},
+            content={
+                "error": str(e),
+                "chat_id": chat_id
+            },
             headers={
                 "Access-Control-Allow-Origin": "http://localhost:8010",
                 "Access-Control-Allow-Credentials": "true",
             }
         )
-@app.get("/variables")
-async def get_variables():
-    """Get list of available variables in the kernel"""
+
+
+# Delete a specific chat
+@app.delete("/chat/{chat_id}")
+async def delete_chat(chat_id: str, request: Request):
+    """Delete a specific chat session and its data"""
+    try:
+        # Get user from session
+        user = get_current_user(request)
+        
+        # Get user and chat specific directory
+        user_path = get_user_path(user)
+        chat_dir = user_path / chat_id
+        
+        # Verify chat exists and belongs to user
+        if not chat_dir.exists():
+            return JSONResponse(
+                status_code=404,
+                content={"error": f"Chat {chat_id} not found for user {user}"}
+            )
+        
+        # Delete the chat directory and all its contents
+        shutil.rmtree(chat_dir)
+        
+        return JSONResponse(
+            content={
+                "message": f"Chat {chat_id} deleted successfully",
+                "chat_id": chat_id,
+                "user": user
+            },
+            headers={
+                "Access-Control-Allow-Origin": "http://localhost:8010",
+                "Access-Control-Allow-Credentials": "true",
+            }
+        )
+        
+    except Exception as e:
+        return JSONResponse(
+            status_code=500,
+            content={
+                "error": f"Failed to delete chat: {str(e)}",
+                "chat_id": chat_id
+            },
+            headers={
+                "Access-Control-Allow-Origin": "http://localhost:8010",
+                "Access-Control-Allow-Credentials": "true",
+            }
+        )
+
+# Delete all chats
+@app.delete("/chats/all")
+async def delete_all_chats(request: Request):
+    """Delete all chat sessions for the current user"""
+    try:
+        # Get user from session
+        user = get_current_user(request)
+        
+        # Get user directory
+        user_path = get_user_path(user)
+        
+        # Count chats before deletion
+        chat_count = len([d for d in user_path.iterdir() if d.is_dir() and d.name.startswith('chat_')])
+        
+        # Delete all chat directories
+        for chat_dir in user_path.iterdir():
+            if chat_dir.is_dir() and chat_dir.name.startswith('chat_'):
+                shutil.rmtree(chat_dir)
+        
+        return JSONResponse(
+            content={
+                "message": "All chats deleted successfully",
+                "user": user,
+                "chats_deleted": chat_count
+            },
+            headers={
+                "Access-Control-Allow-Origin": "http://localhost:8010",
+                "Access-Control-Allow-Credentials": "true",
+            }
+        )
+        
+    except Exception as e:
+        return JSONResponse(
+            status_code=500,
+            content={
+                "error": f"Failed to delete chats: {str(e)}"
+            },
+            headers={
+                "Access-Control-Allow-Origin": "http://localhost:8010",
+                "Access-Control-Allow-Credentials": "true",
+            }
+        )
+
+@app.get("/variables/{chat_id}")
+async def get_variables(chat_id: str, request: Request):
+    """Get list of available variables in the kernel for specific chat"""
     if not state.executor:
-        return {"variables": []}
+        return {"variables": [], "chat_id": chat_id}
     
     try:
+        # Get user from session
+        user = get_current_user(request)
+        
+        # Get user and chat specific directory
+        user_path = get_user_path(user)
+        chat_dir = user_path / chat_id
+        
+        # Verify chat exists and belongs to user
+        if not chat_dir.exists():
+            return JSONResponse(
+                status_code=404,
+                content={"error": f"Chat {chat_id} not found for user {user}"}
+            )
+        
+        # Update state output directory
+        state.output_dir = chat_dir
+        
         cancellation_token = CancellationToken()
         result = await state.executor.execute_code_blocks(
             [CodeBlock(
-                code="print([var for var in locals().keys() if not var.startswith('_')])", 
+                code=f"""
+print([var for var in locals().keys() 
+       if not var.startswith('_') 
+       and (var.startswith('df_') or not any(c.startswith('df_') for c in locals().keys()))])
+                """, 
                 language="python"
             )],
             cancellation_token
@@ -221,131 +528,312 @@ async def get_variables():
         # Clean up the output and convert to list
         variables = result.output
         if isinstance(variables, str):
-            # Remove any leading/trailing brackets and split
             variables = variables.strip('[]').replace("'", "").split(', ')
             variables = [v.strip() for v in variables if v.strip()]
         
-        return {"variables": variables}
+        return JSONResponse(
+            content={
+                "variables": variables,
+                "chat_id": chat_id,
+                "chat_dir": str(chat_dir),
+                "user": user
+            },
+            headers={
+                "Access-Control-Allow-Origin": "http://localhost:8010",
+                "Access-Control-Allow-Credentials": "true",
+            }
+        )
     except Exception as e:
         return JSONResponse(
             status_code=500,
-            content={"error": str(e)}
+            content={
+                "error": str(e),
+                "chat_id": chat_id
+            }
         )
 
-@app.get("/variable/{var_name}")
-async def get_variable_value(var_name: str):
-    """Get value of a specific variable"""
+@app.get("/variable/{chat_id}/{var_name}")
+async def get_variable_value(chat_id: str, var_name: str, request: Request):
+    """Get value of a specific variable for a specific chat"""
     if not state.executor:
         raise HTTPException(status_code=500, detail="Executor not initialized")
     
     try:
+        # Get user from session
+        user = get_current_user(request)
+        
+        # Get user and chat specific directory
+        user_path = get_user_path(user)
+        chat_dir = user_path / chat_id
+        
+        # Verify chat exists and belongs to user
+        if not chat_dir.exists():
+            return JSONResponse(
+                status_code=404,
+                content={"error": f"Chat {chat_id} not found for user {user}"}
+            )
+        
+        # Update state output directory
+        state.output_dir = chat_dir
+        
         cancellation_token = CancellationToken()
         result = await state.executor.execute_code_blocks(
             [CodeBlock(code=f"print({var_name})", language="python")],
             cancellation_token
         )
-        return {"value": result.output}
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
-
-@app.get("/files")
-async def get_files():
-    """Get list of files in the output directory"""
-    if not state.output_dir.exists():
-        return {"files": []}
-    
-    files = [str(f.relative_to(state.output_dir)) for f in state.output_dir.rglob("*") if f.is_file()]
-    return {"files": files}
-
-from fastapi.responses import FileResponse
-from fastapi import HTTPException
-
-@app.get("/file/{file_path:path}")
-async def get_file_content(file_path: str):
-    """Get content of a specific file"""
-    full_path = state.output_dir / file_path
-    if not full_path.exists():
-        raise HTTPException(status_code=404, detail="File not found")
-    
-    try:
-        # If it's an image file, return it directly
-        if file_path.lower().endswith(('.png', '.jpg', '.jpeg')):
-            return FileResponse(full_path)
         
-        # For other files, return the content as before
-        content = full_path.read_text()
-        return {"content": content}
+        return JSONResponse(
+            content={
+                "value": result.output,
+                "variable_name": var_name,
+                "chat_id": chat_id,
+                "user": user
+            },
+            headers={
+                "Access-Control-Allow-Origin": "http://localhost:8010",
+                "Access-Control-Allow-Credentials": "true",
+            }
+        )
     except Exception as e:
-        raise HTTPException(
+        return JSONResponse(
             status_code=500,
-            detail=f"Error reading file: {str(e)}"
+            content={
+                "error": f"Error getting variable {var_name}: {str(e)}",
+                "chat_id": chat_id
+            }
         )
 
+
+@app.get("/files/{chat_id}")
+async def get_files(chat_id: str, request: Request):
+    """Get list of files in the chat-specific output directory"""
+    try:
+        # Get user from session
+        user = get_current_user(request)
+        
+        # Get user and chat specific directory
+        user_path = get_user_path(user)
+        chat_dir = user_path / chat_id
+        
+        # Verify chat exists and belongs to user
+        if not chat_dir.exists():
+            return JSONResponse(
+                status_code=404,
+                content={"error": f"Chat {chat_id} not found for user {user}"}
+            )
+        
+        # Get all files in chat directory
+        files = []
+        for file_path in chat_dir.rglob("*"):
+            if file_path.is_file():
+                files.append({
+                    "name": file_path.name,
+                    "path": str(file_path.relative_to(chat_dir)),
+                    "size": file_path.stat().st_size,
+                    "modified": datetime.datetime.fromtimestamp(file_path.stat().st_mtime).isoformat(),
+                    "type": file_path.suffix[1:] if file_path.suffix else "unknown"
+                })
+
+        return JSONResponse(
+            content={
+                "files": files,
+                "chat_id": chat_id,
+                "user": user,
+                "total_files": len(files)
+            },
+            headers={
+                "Access-Control-Allow-Origin": "http://localhost:8010",
+                "Access-Control-Allow-Credentials": "true",
+            }
+        )
+        
+    except Exception as e:
+        return JSONResponse(
+            status_code=500,
+            content={
+                "error": f"Error getting files: {str(e)}",
+                "chat_id": chat_id
+            }
+        )
+
+@app.get("/file/{chat_id}/{file_path:path}")
+async def get_file_content(chat_id: str, file_path: str, request: Request):
+    """Get content of a specific file from a specific chat"""
+    try:
+        # Get user from session
+        user = get_current_user(request)
+        
+        # Get user and chat specific directory
+        user_path = get_user_path(user)
+        chat_dir = user_path / chat_id
+        full_path = chat_dir / file_path
+        
+        # Verify chat and file exist
+        if not chat_dir.exists():
+            raise HTTPException(
+                status_code=404,
+                detail=f"Chat {chat_id} not found for user {user}"
+            )
+            
+        if not full_path.exists():
+            raise HTTPException(
+                status_code=404,
+                detail=f"File {file_path} not found in chat {chat_id}"
+            )
+        
+        # Verify file is within chat directory (security check)
+        if not str(full_path.resolve()).startswith(str(chat_dir.resolve())):
+            raise HTTPException(
+                status_code=403,
+                detail="Access to file outside chat directory is forbidden"
+            )
+        
+        # Handle different file types
+        if full_path.suffix.lower() in ['.png', '.jpg', '.jpeg']:
+            return FileResponse(
+                full_path,
+                headers={
+                    "Access-Control-Allow-Origin": "http://localhost:8010",
+                    "Access-Control-Allow-Credentials": "true",
+                }
+            )
+        else:
+            # For text files
+            content = full_path.read_text()
+            return JSONResponse(
+                content={
+                    "content": content,
+                    "file_name": full_path.name,
+                    "chat_id": chat_id,
+                    "user": user
+                },
+                headers={
+                    "Access-Control-Allow-Origin": "http://localhost:8010",
+                    "Access-Control-Allow-Credentials": "true",
+                }
+            )
+            
+    except Exception as e:
+        return JSONResponse(
+            status_code=500,
+            content={
+                "error": f"Error reading file: {str(e)}",
+                "chat_id": chat_id,
+                "file_path": file_path
+            }
+        )
 
 import shutil  # Add this to your imports at the top
 
-@app.post("/restart")
-async def restart_kernel():
-    """Restart the Jupyter kernel and clear the coding directory"""
+@app.post("/restart/{chat_id}")
+async def restart_kernel(chat_id: str, request: Request):
+    """Restart the Jupyter kernel and clear the specific chat directory"""
     if not state.executor:
         return JSONResponse(
             status_code=500,
-            content={"error": "Executor not initialized"}
+            content={
+                "error": "Executor not initialized",
+                "chat_id": chat_id
+            }
         )
     
     try:
-        # First, clear all files in the coding directory
-        if state.output_dir.exists():
+        # Get user from session
+        user = get_current_user(request)
+        
+        # Get user and chat specific directory
+        user_path = get_user_path(user)
+        chat_dir = user_path / chat_id
+        
+        # Verify chat exists and belongs to user
+        if not chat_dir.exists():
+            return JSONResponse(
+                status_code=404,
+                content={"error": f"Chat {chat_id} not found for user {user}"}
+            )
+        
+        # Clear files in the chat directory
+        if chat_dir.exists():
             # Remove all contents of the directory
-            for item in state.output_dir.iterdir():
+            for item in chat_dir.iterdir():
                 if item.is_file():
                     item.unlink()  # Delete file
                 elif item.is_dir():
                     shutil.rmtree(item)  # Delete directory and its contents
             
-        # Create the directory if it doesn't exist
-        state.output_dir.mkdir(exist_ok=True)
+        # Create/recreate the directory
+        chat_dir.mkdir(exist_ok=True)
         
-        # Then restart the kernel
+        # Update state output directory
+        state.output_dir = chat_dir
+        
+        # Restart the kernel
         await state.executor.restart()
         
         return JSONResponse(
             content={
-                "message": "Kernel successfully restarted and coding directory cleared",
-                "deleted_path": str(state.output_dir)
+                "message": "Kernel successfully restarted and chat directory cleared",
+                "chat_id": chat_id,
+                "user": user,
+                "chat_dir": str(chat_dir)
             },
             headers={
-                "Access-Control-Allow-Origin": "http://localhost:8009",
+                "Access-Control-Allow-Origin": "http://localhost:8010",
                 "Access-Control-Allow-Credentials": "true",
             }
         )
     except Exception as e:
         return JSONResponse(
             status_code=500,
-            content={"error": f"Failed to restart kernel or clear directory: {str(e)}"},
+            content={
+                "error": f"Failed to restart kernel or clear directory: {str(e)}",
+                "chat_id": chat_id
+            },
             headers={
-                "Access-Control-Allow-Origin": "http://localhost:8009",
+                "Access-Control-Allow-Origin": "http://localhost:8010",
                 "Access-Control-Allow-Credentials": "true",
             }
         )
 
 
+
 class CSVUploadRequest(BaseModel):
     file_path: str
 
-@app.post("/upload_csv")
-async def upload_csv(request: CSVUploadRequest):
-    """
-    Upload CSV file and have the agent load it into memory
-    """
+@app.post("/upload_csv/{chat_id}")
+async def upload_csv_to_chat(chat_id: str, request: CSVUploadRequest, request_obj: Request):
+    """Upload CSV file to specific chat session"""
+    if not state.agent or not state.executor:
+        return JSONResponse(
+            status_code=500,
+            content={"error": "Agent or executor not initialized"}
+        )
+    
     try:
-        # Copy file to working directory
+        # Get user from session
+        user = get_current_user(request_obj)
+        
+        # Get user and chat specific directory
+        user_path = get_user_path(user)
+        chat_dir = user_path / chat_id
+        
+        # Verify chat exists and belongs to user
+        if not chat_dir.exists():
+            return JSONResponse(
+                status_code=404,
+                content={"error": f"Chat {chat_id} not found for user {user}"}
+            )
+        
+        # Update state output directory
+        state.output_dir = chat_dir
+        
+        # Copy file to chat directory
         file_name = Path(request.file_path).name
-        destination = state.output_dir / file_name
+        destination = chat_dir / file_name
         shutil.copy2(request.file_path, destination)
         
-        # Create query for agent to load the file
-        load_query = f"read the CSV file named '{destination}' and load it into a DataFrame named 'df'"
+        # Create query for agent to read the file with chat-specific DataFrame name
+        load_query = f"read the CSV file named '{destination}' and load it into a DataFrame named 'df_{chat_id}'"
         
         # Process query using agent
         result = await Console(
@@ -356,7 +844,10 @@ async def upload_csv(request: CSVUploadRequest):
             content={
                 "message": "CSV file uploaded and loaded",
                 "file_name": file_name,
-                "agent_response": result.messages[-1].content if result.messages else "",
+                "chat_id": chat_id,
+                "chat_dir": str(chat_dir),
+                "user": user,
+                "agent_response": result.messages[-1].content if result.messages else ""
             },
             headers={
                 "Access-Control-Allow-Origin": "http://localhost:8010",
@@ -367,12 +858,16 @@ async def upload_csv(request: CSVUploadRequest):
     except Exception as e:
         return JSONResponse(
             status_code=500,
-            content={"error": f"Failed to process CSV file: {str(e)}"},
+            content={
+                "error": f"Failed to process CSV file: {str(e)}",
+                "chat_id": chat_id
+            },
             headers={
                 "Access-Control-Allow-Origin": "http://localhost:8010",
                 "Access-Control-Allow-Credentials": "true",
             }
         )
+
     
 
 if __name__ == "__main__":

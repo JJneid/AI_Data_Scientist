@@ -7,11 +7,16 @@ This is a backend service that allows users to create chat sessions and interact
 
 The chat sessions are stored in memory and are NOT deleted when the server is restarted. Unless, the user deletes the chat session or we call delete all chats endpoint and file directories.
 
-The chat sessions are created with a unique id and a timestamp. The chat sessions are stored in a dictionary with the chat id as the key and the chat session as the value. The chat session is a class that has a chat id, a user id, a list of variables, and a list of files. 
+The chat sessions are created with a unique id and a timestamp. The chat sessions are stored in a dictionary with the chat id as the key and the chat session as the value. 
 
-The chat session class has methods to add variables, get variables, add files, get files, and delete files. 
+We have endpoints to create a chat session, query a chat session, delete a chat session, get variables in a chat session, get files in a chat session, restart a chat session, delete a specific chat session, delete all chat sessions, and upload a csv file.
 
-The chat session class also has a method to restart the session which deletes all variables and files in the chat session. 
+The Auth is done via github, the user logs in with github and the session cookie is used to authenticate the api calls.
+
+For the AI, we are using a library called Autogen, when asked to generated files, the agent might save the plots in the main directory path and not in its intended chat session directory. 
+
+However, when the user asks for the file, the agent will look for the file in the chat session directory and return it to the user.
+
 
 ## Front end
 

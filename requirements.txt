@@ -10,3 +10,4 @@ langchain_experimental
 authlib 
 httpx 
 itsdangerous
+starlette

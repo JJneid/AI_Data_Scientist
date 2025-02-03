@@ -241,6 +241,17 @@ NEXTJS_UI_URL = "http://localhost:3000"
 
 app = FastAPI(lifespan=lifespan)
 
+from fastapi.middleware.cors import CORSMiddleware
+from starlette.middleware.sessions import SessionMiddleware
+
+
+app.add_middleware(
+    CORSMiddleware,  # 🔹 CORS should be added separately
+    allow_origins=["http://localhost:3000"],  # ✅ Allow frontend
+    allow_credentials=True,
+    allow_methods=["*"],  # ✅ Allow all methods (GET, POST, etc.)
+    allow_headers=["*"],  # ✅ Allow all headers
+)
 
 
 app.add_middleware(

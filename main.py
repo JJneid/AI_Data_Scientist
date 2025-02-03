@@ -23,7 +23,35 @@ import pandas as pd
 from langchain_experimental.tools.python.tool import PythonAstREPLTool
 from autogen_ext.tools.langchain import LangChainToolAdapter
 
+from fastapi import FastAPI, Request
+from authlib.integrations.starlette_client import OAuth
+from starlette.middleware.sessions import SessionMiddleware
+from starlette.responses import RedirectResponse
+from fastapi import FastAPI, Request
+from starlette.responses import RedirectResponse
+import requests
+from starlette.requests import Request
+
+from fastapi import Request, Response
+from fastapi.responses import RedirectResponse, JSONResponse
+import os
+
+from starlette.middleware.sessions import SessionMiddleware
+from authlib.integrations.starlette_client import OAuth
+
+
+from fastapi import FastAPI, Request
+from fastapi.middleware.cors import CORSMiddleware
+from starlette.middleware.sessions import SessionMiddleware
+from starlette.responses import RedirectResponse, JSONResponse
+import requests
+import os
+
+
+
 load_dotenv()
+
+
 
 path= "/Users/JJneid/Desktop/SlashMl/AI_Data_Scientist/ui/coding"
 class GlobalState:
@@ -105,6 +133,38 @@ save_tool = FunctionTool(
     name="save_tool"  # Explicitly set the name
 )
 
+def get_user_path(username: str) -> Path:
+    """
+    Creates and returns a user-specific directory path
+    
+    Args:
+        username: The username (from GitHub in this case)
+    
+    Returns:
+        Path: Path object pointing to user's directory
+    """
+    # Base path is your main directory (the one you defined as 'path')
+    user_path = Path(path) / username
+    
+    # Create the directory if it doesn't exist
+    user_path.mkdir(parents=True, exist_ok=True)
+    
+    return user_path
+
+from fastapi.responses import RedirectResponse
+
+def get_current_user(request: Request) -> str:
+    """Get current user from session"""
+    print("Session contents:", dict(request.session))  # Debug log
+    user = request.session.get('user')
+    print("Found user:", user)  # Debug log
+    if not user:
+        raise HTTPException(
+            status_code=401,
+            detail="Not authenticated"
+        )
+    return user
+
 
 
 @asynccontextmanager
@@ -150,34 +210,22 @@ async def lifespan(app: FastAPI):
         if state.executor:
             await state.executor.__aexit__(None, None, None)
 
-app = FastAPI(lifespan=lifespan)
 
-app.add_middleware(
-    CORSMiddleware,
-    allow_origins=[
-        "http://localhost:8010",
-        "http://127.0.0.1:8010",
-        "http://[::1]:8010",  # IPv6 localhost
-        "http://0.0.0.0:8010",
-    ],
-    allow_credentials=True,
-    allow_methods=["*"],
-    allow_headers=["*"],
-)
+from starlette.config import Config
 
-from fastapi import FastAPI, Request
-from authlib.integrations.starlette_client import OAuth
-from starlette.middleware.sessions import SessionMiddleware
-from starlette.responses import RedirectResponse
+# Remove all existing OAuth and session middleware configurations and replace with:
 
-# Add these to your FastAPI app setup
-app.add_middleware(SessionMiddleware, secret_key="your-secret-key")
-
+# Initialize OAuth with config
+config = Config('.env')  # This will use environment variables
 oauth = OAuth()
+
+GITHUB_CLIENT_ID = "Ov23liezkCibS7CDLeCR"
+GITHUB_CLIENT_SECRET = "944b3dc9dd8e6b817ae0cbb7a031f8c56d9d6d5b"
+
 oauth.register(
     name='github',
-    client_id='Ov23liezkCibS7CDLeCR',
-    client_secret='944b3dc9dd8e6b817ae0cbb7a031f8c56d9d6d5b',
+    client_id=GITHUB_CLIENT_ID,
+    client_secret=GITHUB_CLIENT_SECRET,
     access_token_url='https://github.com/login/oauth/access_token',
     access_token_params=None,
     authorize_url='https://github.com/login/oauth/authorize',
@@ -185,50 +233,107 @@ oauth.register(
     api_base_url='https://api.github.com/',
     client_kwargs={'scope': 'user:email'},
 )
+SECRET_KEY = os.getenv("SESSION_SECRET")
 
-def get_user_path(username: str) -> Path:
-    """
-    Creates and returns a user-specific directory path
-    
-    Args:
-        username: The username (from GitHub in this case)
-    
-    Returns:
-        Path: Path object pointing to user's directory
-    """
-    # Base path is your main directory (the one you defined as 'path')
-    user_path = Path(path) / username
-    
-    # Create the directory if it doesn't exist
-    user_path.mkdir(parents=True, exist_ok=True)
-    
-    return user_path
 
-def get_current_user(request: Request):
-    user = request.session.get('user')
-    if not user:
-        raise HTTPException(status_code=401, detail="Not authenticated")
-    return user
 
+NEXTJS_UI_URL = "http://localhost:3000" 
+
+app = FastAPI(lifespan=lifespan)
+
+
+
+app.add_middleware(
+    SessionMiddleware, 
+    secret_key=SECRET_KEY,
+    session_cookie="github_session",  # Specific name for the session cookie
+    max_age=3600,  # Session duration in seconds
+    same_site='lax',
+    https_only=False  # Set to True in production
+)
+
+############################ endpoints ########################################
 
 @app.get('/login/github')
 async def github_login(request: Request):
-    redirect_uri = request.url_for('auth_github')
-    return await oauth.github.authorize_redirect(request, redirect_uri)
+    """Handle GitHub login"""
+    try:
+        # Get the callback URL
+        redirect_uri = request.url_for('auth_github')
+        print(f"Redirect URI: {redirect_uri}")  # Debug log
+        
+        return await oauth.github.authorize_redirect(request, redirect_uri)
+    except Exception as e:
+        print(f"Login error: {str(e)}")
+        return JSONResponse(
+            status_code=500,
+            content={"error": f"Login failed: {str(e)}"}
+        )
 
-@app.get('/auth/github/callback')
+@app.get('/auth/github/callback', name='auth_github')
 async def auth_github(request: Request):
-    token = await oauth.github.authorize_access_token(request)
-    resp = await oauth.github.get('user', token=token)
-    user = resp.json()
-    
-    # Create user directory
-    user_path = get_user_path(user['login'])
-    
-    # Store user info in session
-    request.session['user'] = user['login']
-    
-    return RedirectResponse(url='/dashboard')
+    """Handle GitHub callback"""
+    try:
+        token = await oauth.github.authorize_access_token(request)
+        resp = await oauth.github.get('user', token=token)
+        user = resp.json()
+        
+        # Store user info in session
+        request.session['user'] = user['login']
+        
+        # Create user directory
+        user_path = get_user_path(user['login'])
+        
+        # Get session cookie from request headers
+        cookies = request.cookies
+        session_cookie = cookies.get('session')
+        
+        # Create response
+        response = JSONResponse({
+            "message": "Successfully logged in",
+            "user": user['login'],
+            "user_path": str(user_path),
+            "session_data": {
+                "user": request.session.get('user')
+            },
+            "session_cookie": session_cookie,  # Include the session cookie in response
+            "cookies": dict(cookies)  # Include all cookies for debugging
+        })
+        
+        return response
+        
+    except Exception as e:
+        print(f"Callback error: {str(e)}")
+        return JSONResponse(
+            status_code=500,
+            content={"error": f"Auth failed: {str(e)}"}
+        )
+
+# @app.get('/auth/github/callback', name='auth_github')
+# async def auth_github(request: Request):
+#     """Handle GitHub OAuth callback"""
+#     try:
+#         token = await oauth.github.authorize_access_token(request)
+#         resp = await oauth.github.get('user', token=token)
+#         user = resp.json()
+
+#         # Store user info in session
+#         request.session['user'] = user['login']
+
+#         # Get all cookies from the request
+#         cookies = request.cookies
+
+#         print("🔹 Cookies from request:", cookies)  # Debugging cookies
+#         print("🔹 Session stored in request:", request.session)  # Debugging session
+
+#         # Redirect to frontend
+#         return RedirectResponse(url="http://localhost:3000")
+
+#     except Exception as e:
+#         print(f"Callback error: {str(e)}")
+#         return JSONResponse(status_code=500, content={"error": f"Auth failed: {str(e)}"})
+
+
 
 
 class ChatSession(BaseModel):
@@ -261,7 +366,7 @@ async def create_chat(request: Request):
                 "user": user
             },
             headers={
-                "Access-Control-Allow-Origin": "http://localhost:8010",
+                "Access-Control-Allow-Origin": "http://localhost:3000/",
                 "Access-Control-Allow-Credentials": "true",
             }
         )
@@ -272,7 +377,7 @@ async def create_chat(request: Request):
                 "error": f"Failed to create chat: {str(e)}"
             },
             headers={
-                "Access-Control-Allow-Origin": "http://localhost:8010",
+                "Access-Control-Allow-Origin": "http://localhost:3000/",
                 "Access-Control-Allow-Credentials": "true",
             }
         )
@@ -320,7 +425,7 @@ async def list_chats(request: Request):
                 "total_chats": len(chats)
             },
             headers={
-                "Access-Control-Allow-Origin": "http://localhost:8010",
+                "Access-Control-Allow-Origin": "http://localhost:3000/",
                 "Access-Control-Allow-Credentials": "true",
             }
         )
@@ -330,7 +435,7 @@ async def list_chats(request: Request):
             status_code=500,
             content={"error": f"Failed to list chats: {str(e)}"},
             headers={
-                "Access-Control-Allow-Origin": "http://localhost:8010",
+                "Access-Control-Allow-Origin": "http://localhost:3000/",
                 "Access-Control-Allow-Credentials": "true",
             }
         )
@@ -379,7 +484,7 @@ async def query_agent_with_chat(chat_id: str, request: QueryRequest, request_obj
                 "chat_dir": str(chat_dir)
             },
             headers={
-                "Access-Control-Allow-Origin": "http://localhost:8010",
+                "Access-Control-Allow-Origin": "http://localhost:3000/",
                 "Access-Control-Allow-Credentials": "true",
             }
         )
@@ -392,7 +497,7 @@ async def query_agent_with_chat(chat_id: str, request: QueryRequest, request_obj
                 "chat_id": chat_id
             },
             headers={
-                "Access-Control-Allow-Origin": "http://localhost:8010",
+                "Access-Control-Allow-Origin": "http://localhost:3000/",
                 "Access-Control-Allow-Credentials": "true",
             }
         )
@@ -427,7 +532,7 @@ async def delete_chat(chat_id: str, request: Request):
                 "user": user
             },
             headers={
-                "Access-Control-Allow-Origin": "http://localhost:8010",
+                "Access-Control-Allow-Origin": "http://localhost:3000/",
                 "Access-Control-Allow-Credentials": "true",
             }
         )
@@ -440,7 +545,7 @@ async def delete_chat(chat_id: str, request: Request):
                 "chat_id": chat_id
             },
             headers={
-                "Access-Control-Allow-Origin": "http://localhost:8010",
+                "Access-Control-Allow-Origin": "http://localhost:3000/",
                 "Access-Control-Allow-Credentials": "true",
             }
         )
@@ -471,7 +576,7 @@ async def delete_all_chats(request: Request):
                 "chats_deleted": chat_count
             },
             headers={
-                "Access-Control-Allow-Origin": "http://localhost:8010",
+                "Access-Control-Allow-Origin": "http://localhost:3000/",
                 "Access-Control-Allow-Credentials": "true",
             }
         )
@@ -483,7 +588,7 @@ async def delete_all_chats(request: Request):
                 "error": f"Failed to delete chats: {str(e)}"
             },
             headers={
-                "Access-Control-Allow-Origin": "http://localhost:8010",
+                "Access-Control-Allow-Origin": "http://localhost:3000/",
                 "Access-Control-Allow-Credentials": "true",
             }
         )
@@ -539,7 +644,7 @@ print([var for var in locals().keys()
                 "user": user
             },
             headers={
-                "Access-Control-Allow-Origin": "http://localhost:8010",
+                "Access-Control-Allow-Origin": "http://localhost:3000/",
                 "Access-Control-Allow-Credentials": "true",
             }
         )
@@ -590,7 +695,7 @@ async def get_variable_value(chat_id: str, var_name: str, request: Request):
                 "user": user
             },
             headers={
-                "Access-Control-Allow-Origin": "http://localhost:8010",
+                "Access-Control-Allow-Origin": "http://localhost:3000/",
                 "Access-Control-Allow-Credentials": "true",
             }
         )
@@ -642,7 +747,7 @@ async def get_files(chat_id: str, request: Request):
                 "total_files": len(files)
             },
             headers={
-                "Access-Control-Allow-Origin": "http://localhost:8010",
+                "Access-Control-Allow-Origin": "http://localhost:3000/",
                 "Access-Control-Allow-Credentials": "true",
             }
         )
@@ -693,7 +798,7 @@ async def get_file_content(chat_id: str, file_path: str, request: Request):
             return FileResponse(
                 full_path,
                 headers={
-                    "Access-Control-Allow-Origin": "http://localhost:8010",
+                    "Access-Control-Allow-Origin": "http://localhost:3000/",
                     "Access-Control-Allow-Credentials": "true",
                 }
             )
@@ -708,7 +813,7 @@ async def get_file_content(chat_id: str, file_path: str, request: Request):
                     "user": user
                 },
                 headers={
-                    "Access-Control-Allow-Origin": "http://localhost:8010",
+                    "Access-Control-Allow-Origin": "http://localhost:3000/",
                     "Access-Control-Allow-Credentials": "true",
                 }
             )
@@ -778,7 +883,7 @@ async def restart_kernel(chat_id: str, request: Request):
                 "chat_dir": str(chat_dir)
             },
             headers={
-                "Access-Control-Allow-Origin": "http://localhost:8010",
+                "Access-Control-Allow-Origin": "http://localhost:3000/",
                 "Access-Control-Allow-Credentials": "true",
             }
         )
@@ -790,7 +895,7 @@ async def restart_kernel(chat_id: str, request: Request):
                 "chat_id": chat_id
             },
             headers={
-                "Access-Control-Allow-Origin": "http://localhost:8010",
+                "Access-Control-Allow-Origin": "http://localhost:3000/",
                 "Access-Control-Allow-Credentials": "true",
             }
         )
@@ -850,7 +955,7 @@ async def upload_csv_to_chat(chat_id: str, request: CSVUploadRequest, request_ob
                 "agent_response": result.messages[-1].content if result.messages else ""
             },
             headers={
-                "Access-Control-Allow-Origin": "http://localhost:8010",
+                "Access-Control-Allow-Origin": "http://localhost:3000/",
                 "Access-Control-Allow-Credentials": "true",
             }
         )
@@ -863,7 +968,7 @@ async def upload_csv_to_chat(chat_id: str, request: CSVUploadRequest, request_ob
                 "chat_id": chat_id
             },
             headers={
-                "Access-Control-Allow-Origin": "http://localhost:8010",
+                "Access-Control-Allow-Origin": "http://localhost:3000/",
                 "Access-Control-Allow-Credentials": "true",
             }
         )

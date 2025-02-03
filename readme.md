@@ -1,5 +1,5 @@
 
-# new auth backend, referencing main.py
+# AI Data Scientist backend
 
 ## reproduce
 1- create venv with python version 3.11.9

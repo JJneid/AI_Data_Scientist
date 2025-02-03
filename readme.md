@@ -3,7 +3,9 @@
 
 ## reproduce
 1- create venv with python version 3.11.9
+
 2- install requirements from requirements.txt
+
 3- run main.py file on 8018 port
 ```
 uvicorn main:app --host 0.0.0.0 --port 8018 --reload --log-level debug
